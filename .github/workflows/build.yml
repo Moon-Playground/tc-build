@@ -25,10 +25,11 @@ jobs:
     if: contains(fromJson('["x86","all"]'), github.event.inputs.target)
     runs-on: ubuntu-latest
     container:
-      image: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [wulan17/archlinux:latest, wulan17/debian:latest]
+      # image: ${{ matrix.os }}
+      image: wulan17/debian:latest
+    #strategy:
+    #  matrix:
+    #    os: [wulan17/archlinux:latest, wulan17/debian:latest]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
