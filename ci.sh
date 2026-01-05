@@ -6,6 +6,8 @@ src=$base/src
 export PATH="$base/.clang/bin:$PATH"
 if [[ $(command -v apt) ]]; then
     export OS=debian
+elif [[ $(command -v dnf) ]]; then
+    export OS=fedora
 else
     export OS=archlinux
 fi
@@ -73,6 +75,41 @@ function do_deps() {
             python-setuptools \
             python3 \
             uboot-tools
+    elif [[ $OS == "fedora" ]]; then
+        dnf install -y \
+            bc \
+            bison \
+            ccache \
+            clang \
+            cmake \
+            compiler-rt \
+            cpio \
+            curl \
+            flex \
+            gcc-c++ \
+            git \
+            gh \
+            libbsd-devel \
+            libcap-devel \
+            libedit-devel \
+            libffi-devel \
+            libtool \
+            lld \
+            llvm-devel \
+            make \
+            ncurses-compat-libs \
+            ninja-build \
+            openssl-devel \
+            patchelf \
+            perl-Digest-SHA \
+            python3-pyelftools \
+            python3-setuptools \
+            rpm-build \
+            rpmdevtools \
+            uboot-tools \
+            wget \
+            xz \
+            zlib-devel
     else
         # Refresh mirrorlist to avoid dead mirrors
         apt update -y
@@ -182,11 +219,62 @@ function do_compress() {
     # Get git commit hash
     git_hash=$(git -C "$base"/llvm-project rev-parse --short HEAD)
     clang_version=$("$base"/install/bin/clang --version | head -n 1 | awk '{print $4}')
+    major_version=$(echo "$clang_version" | cut -d. -f1)
 
     if [[ $OS == "archlinux" ]]; then
         file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-archlinux-"$git_hash".tar.xz
     elif [[ $OS == "debian" ]]; then
         file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-bookworm-"$git_hash".tar.xz
+    elif [[ $OS == "fedora" ]]; then
+        # Create RPM structure
+        rpmbuild_dir="$base/rpmbuild"
+        mkdir -p "$rpmbuild_dir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+        # Create tarball for RPM source
+        src_tar="clang-$clang_version.tar.gz"
+        tar -czf "$rpmbuild_dir/SOURCES/$src_tar" -C "$install" .
+
+        # Create SPEC file
+        cat <<EOF >"$rpmbuild_dir/SPECS/clang.spec"
+Name:           clang-$LLVM_VENDOR_STRING
+Version:        $major_version
+Release:        $git_hash%{?dist}
+Summary:        Custom LLVM/Clang build
+License:        Apache-2.0
+Source0:        $src_tar
+BuildArch:      x86_64
+AutoReqProv:    no
+
+%description
+Custom LLVM/Clang build by $LLVM_VENDOR_STRING
+
+%prep
+%setup -c
+
+%install
+mkdir -p %{buildroot}/usr
+cp -r * %{buildroot}/usr/
+
+%files
+/usr/*
+
+%changelog
+* $(date "+%a %b %d %Y") $LLVM_VENDOR_STRING - $major_version-$git_hash
+- Automated build
+EOF
+
+        # Build RPM
+        rpmbuild -bb "$rpmbuild_dir/SPECS/clang.spec" --define "_topdir $rpmbuild_dir"
+
+        # Move RPM to dist
+        mkdir -p "$base"/dist
+        mv "$rpmbuild_dir"/RPMS/x86_64/*.rpm "$base"/dist/
+
+        # Upload RPMs
+        for rpm in "$base"/dist/*.rpm; do
+            curl -X POST -F "file=@$rpm" https://temp.wulan17.dev/api/v1/upload
+        done
+        return
     fi
     # Compress the install folder to save space
     mkdir -p "$base"/dist
@@ -198,10 +286,22 @@ function do_compress() {
 function do_release() {
     # Upload to GitHub Releases using GitHub CLI
     file_name=""
-    while IFS= read -r -d '' f; do
-        file_name="$f"
-        break
-    done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
+    if [[ $OS == "fedora" ]]; then
+        # Find RPM files
+        find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0 | while IFS= read -r -d '' f; do
+            file_name="$f"
+            # Just take the first one or we can stick to one var.
+            # Ideally we should upload all, but let's stick to the structure.
+            # Assuming one RPM for now or we will just use the last found for ASSET assignment variable (logic below only supports one asset)
+            # To support multiple, we'd need to loop the upload command.
+            break
+        done
+    else
+        while IFS= read -r -d '' f; do
+            file_name="$f"
+            break
+        done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
+    fi
     if [[ -z $file_name ]]; then
         echo "No file found to upload."
         exit 1

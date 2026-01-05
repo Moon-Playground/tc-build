@@ -1,0 +1,46 @@
+name: Build LLVM and Binutils (fedora)
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_ref:
+        description: 'LLVM branch, tag, or Full SHA'
+        required: true
+        default: 'release/20.x'
+      vendor_string:
+        description: 'Vendor string for the build'
+        required: true
+        default: 'Mayuri'
+
+jobs:
+  build_x86_64:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Install dependencies
+      run: bash ci.sh deps
+    - name: Authenticate GitHub CLI
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+    - name: Clone LLVM
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        ref: ${{ github.event.inputs.llvm_ref }}
+        path: llvm-project
+    - name: Build LLVM
+      run: bash ci.sh llvm
+      env:
+        LLVM_VENDOR_STRING: ${{ github.event.inputs.vendor_string }}
+    - name: Build binutils
+      run: bash ci.sh binutils
+    - name: Compress artifacts
+      run: bash ci.sh compress
+      env:
+        LLVM_VENDOR_STRING: ${{ github.event.inputs.vendor_string }}
+    - name: Release to GitHub
+      run: bash ci.sh release
+      env:
+        LLVM_VENDOR_STRING: ${{ github.event.inputs.vendor_string }}
