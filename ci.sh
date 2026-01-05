@@ -244,6 +244,7 @@ License:        Apache-2.0
 Source0:        $src_tar
 BuildArch:      x86_64
 AutoReqProv:    no
+Provides:       clang llvm lld polly openmp compiler-rt binutils
 
 %description
 Custom LLVM/Clang build by $LLVM_VENDOR_STRING
