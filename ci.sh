@@ -208,6 +208,13 @@ function do_compress() {
 
         # Create SPEC file
         cat <<EOF >"$rpmbuild_dir/SPECS/clang.spec"
+# Disable the build-id and debuginfo generation that is causing the crash
+%define _missing_build_ids_terminate_build 0
+%define debug_package %{nil}
+%global __brp_ldconfig /usr/bin/true
+%global __brp_strip /usr/bin/true
+%global __brp_mangled_shebangs /usr/bin/true
+
 Name:           clang-$LLVM_VENDOR_STRING
 Version:        $major_version
 Release:        $git_hash%{?dist}
@@ -227,6 +234,13 @@ Custom LLVM/Clang build by $LLVM_VENDOR_STRING
 %install
 mkdir -p %{buildroot}/usr
 cp -r * %{buildroot}/usr/
+
+# Fix ambiguous python shebangs
+find %{buildroot}/usr/share/opt-viewer/ -name "*.py" -exec sed -i '1s|#!.*python|#!/usr/bin/python3|' {} +
+
+# Fix executable bit warnings
+chmod -x %{buildroot}/usr/share/opt-viewer/style.css
+chmod -x %{buildroot}/usr/share/opt-viewer/optpmap.py
 
 %files
 /usr/*
@@ -273,10 +287,10 @@ function do_release() {
     file_name=""
     if [[ $OS == "fedora" ]]; then
         # Find RPM files
-        find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0 | while IFS= read -r -d '' f; do
+        while IFS= read -r -d '' f; do
             file_name="$f"
             break
-        done
+        done < <(find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0)
     else
         while IFS= read -r -d '' f; do
             file_name="$f"
