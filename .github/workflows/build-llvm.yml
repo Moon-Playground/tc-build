@@ -1,0 +1,31 @@
+name: Build LLVM
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_ref:
+        description: 'LLVM branch, tag, or Full SHA'
+        required: true
+        default: 'release/21.x'
+      vendor_string:
+        description: 'Vendor string for the build'
+        required: true
+        default: 'Mayuri'
+
+permissions:
+  contents: write
+
+jobs:
+  fedora:
+    uses: ./.github/workflows/build-fedora.yml
+    with:
+      llvm_ref: ${{ inputs.llvm_ref }}
+      vendor_string: ${{ inputs.vendor_string }}
+    secrets: inherit
+
+  debian:
+    uses: ./.github/workflows/build-debian.yml
+    with:
+      llvm_ref: ${{ inputs.llvm_ref }}
+      vendor_string: ${{ inputs.vendor_string }}
+    secrets: inherit

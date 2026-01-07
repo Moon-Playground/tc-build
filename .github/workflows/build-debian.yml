@@ -1,4 +1,4 @@
-name: Build LLVM and Binutils (fedora)
+name: Build LLVM and Binutils (debian)
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
   build_llvm:
     runs-on: ${{ matrix.run_on }}
     container:
-      image: fedora:latest
+      image: debian:bookworm
     strategy:
       matrix:
         run_on:
