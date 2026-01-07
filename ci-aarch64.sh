@@ -3,6 +3,13 @@
 base=$(dirname "$(readlink -f "$0")")
 install=$base/install
 export PATH="$base/.clang/bin:$PATH"
+if [[ $(command -v apt) ]]; then
+    export OS=debian
+elif [[ $(command -v dnf) ]]; then
+    export OS=fedora
+else
+    export OS=debian
+fi
 
 set -eu
 
@@ -32,44 +39,75 @@ function do_binutils() {
 function do_deps() {
     # We only run this when running on GitHub Actions
     [[ -z ${GITHUB_ACTIONS:-} ]] && return 0
+    if [[ $OS == "fedora" ]]; then
+        dnf install -y \
+            bc \
+            bison \
+            ccache \
+            clang \
+            cmake \
+            compiler-rt \
+            cpio \
+            curl \
+            flex \
+            gcc-c++ \
+            git \
+            gh \
+            libbsd-devel \
+            libcap-devel \
+            libedit-devel \
+            libffi-devel \
+            libtool \
+            lld \
+            llvm-devel \
+            make \
+            ncurses-compat-libs \
+            ninja-build \
+            openssl-devel \
+            patchelf \
+            perl-Digest-SHA \
+            python3-pyelftools \
+            python3-setuptools \
+            rpm-build \
+            rpmdevtools \
+            uboot-tools \
+            wget \
+            xz \
+            zlib-devel
+    else
+        # Refresh mirrorlist to avoid dead mirrors
+        apt update -y
 
-    # Refresh mirrorlist to avoid dead mirrors
-    apt update -y
-
-    apt install -y --no-install-recommends \
-        bc \
-        bison \
-        ca-certificates \
-        clang \
-        cmake \
-        curl \
-        file \
-        flex \
-        g++ \
-        gcc \
-        gh \
-        git \
-        libbsd-dev \
-        libcap-dev \
-        libedit-dev \
-        libelf-dev \
-        libffi-dev \
-        libssl-dev \
-        libstdc++-12-dev \
-        lld \
-        make \
-        ninja-build \
-        patchelf \
-        python3 \
-        texinfo \
-        wget \
-        xz-utils \
-        zlib1g-dev
-
-    #wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.6/LLVM-20.1.6-Linux-ARM64.tar.xz
-    #mkdir -p "$base"/.clang
-    #tar -xf LLVM-20.1.6-Linux-ARM64.tar.xz -C "$base"/.clang
-    #rm LLVM-20.1.6-Linux-ARM64.tar.xz
+        apt install -y --no-install-recommends \
+            bc \
+            bison \
+            ca-certificates \
+            clang \
+            cmake \
+            curl \
+            file \
+            flex \
+            g++ \
+            gcc \
+            gh \
+            git \
+            libbsd-dev \
+            libcap-dev \
+            libedit-dev \
+            libelf-dev \
+            libffi-dev \
+            libssl-dev \
+            libstdc++-12-dev \
+            lld \
+            make \
+            ninja-build \
+            patchelf \
+            python3 \
+            texinfo \
+            wget \
+            xz-utils \
+            zlib1g-dev
+    fi
 }
 
 function do_llvm() {
@@ -102,19 +140,76 @@ function do_compress() {
         strip -s "${f::-1}"
     done
 
-    # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
-    for bin in $(find install -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | awk '{print $1}'); do
-        # Remove last character from file output (':')
-        bin="${bin::-1}"
+    if [[ $OS != "fedora" ]]; then
+        # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
+        for bin in $(find install -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | awk '{print $1}'); do
+            # Remove last character from file output (':')
+            bin="${bin::-1}"
 
-        echo "$bin"
-        patchelf --set-rpath install/lib "$bin"
-    done
+            echo "$bin"
+            patchelf --set-rpath install/lib "$bin"
+        done
+    fi
 
     # Get git commit hash
     git_hash=$(git -C "$base"/llvm-project rev-parse --short HEAD)
     clang_version=$("$base"/install/bin/clang --version | head -n 1 | awk '{print $4}')
-    file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-bookworm-aarch64-"$git_hash".tar.xz
+    major_version=$(echo "$clang_version" | cut -d. -f1)
+
+    if [[ $OS == "fedora" ]]; then
+        # Create RPM structure
+        rpmbuild_dir="$base/rpmbuild"
+        mkdir -p "$rpmbuild_dir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+        # Create tarball for RPM source
+        src_tar="clang-$clang_version.tar.gz"
+        tar -czf "$rpmbuild_dir/SOURCES/$src_tar" -C "$install" .
+
+        # Create SPEC file
+        cat <<EOF >"$rpmbuild_dir/SPECS/clang.spec"
+Name:           clang-$LLVM_VENDOR_STRING
+Version:        $major_version
+Release:        $git_hash%{?dist}
+Summary:        Custom LLVM/Clang build
+License:        Apache-2.0
+Source0:        $src_tar
+BuildArch:      aarch64
+AutoReqProv:    no
+Provides:       clang llvm lld polly openmp compiler-rt binutils
+
+%description
+Custom LLVM/Clang build by $LLVM_VENDOR_STRING
+
+%prep
+%setup -c
+
+%install
+mkdir -p %{buildroot}/usr
+cp -r * %{buildroot}/usr/
+
+%files
+/usr/*
+
+%changelog
+* $(date "+%a %b %d %Y") $LLVM_VENDOR_STRING - $major_version-$git_hash
+- Automated build
+EOF
+
+        # Build RPM
+        rpmbuild -bb "$rpmbuild_dir/SPECS/clang.spec" --define "_topdir $rpmbuild_dir"
+
+        # Move RPM to dist
+        mkdir -p "$base"/dist
+        mv "$rpmbuild_dir"/RPMS/aarch64/*.rpm "$base"/dist/
+
+        # Upload RPMs
+        for rpm in "$base"/dist/*.rpm; do
+            curl -X POST -F "file=@$rpm" https://temp.wulan17.dev/api/v1/upload
+        done
+        return
+    else
+        file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-bookworm-aarch64-"$git_hash".tar.xz
+    fi
 
     # Compress the install folder to save space
     mkdir -p "$base"/dist
@@ -126,10 +221,22 @@ function do_compress() {
 function do_release() {
     # Upload to GitHub Releases using GitHub CLI
     file_name=""
-    while IFS= read -r -d '' f; do
-        file_name="$f"
-        break
-    done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
+    if [[ $OS == "fedora" ]]; then
+        # Find RPM files
+        find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0 | while IFS= read -r -d '' f; do
+            file_name="$f"
+            # Just take the first one or we can stick to one var.
+            # Ideally we should upload all, but let's stick to the structure.
+            # Assuming one RPM for now or we will just use the last found for ASSET assignment variable (logic below only supports one asset)
+            # To support multiple, we'd need to loop the upload command.
+            break
+        done
+    else
+        while IFS= read -r -d '' f; do
+            file_name="$f"
+            break
+        done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
+    fi
     if [[ -z $file_name ]]; then
         echo "No file found to upload."
         exit 1

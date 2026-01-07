@@ -13,10 +13,15 @@ on:
         default: 'Mayuri'
 
 jobs:
-  build_x86_64:
-    runs-on: ubuntu-latest
+  build_llvm:
+    runs-on: ${{ matrix.run_on }}
     container:
       image: fedora:latest
+    strategy:
+      matrix:
+        run_on:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4

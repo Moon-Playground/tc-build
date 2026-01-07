@@ -207,14 +207,16 @@ function do_compress() {
         strip -s "${f::-1}"
     done
 
-    # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
-    for bin in $(find install -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | awk '{print $1}'); do
-        # Remove last character from file output (':')
-        bin="${bin::-1}"
+    if [[ $OS != "fedora" ]]; then
+        # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
+        for bin in $(find install -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | awk '{print $1}'); do
+            # Remove last character from file output (':')
+            bin="${bin::-1}"
 
-        echo "$bin"
-        patchelf --set-rpath install/lib "$bin"
-    done
+            echo "$bin"
+            patchelf --set-rpath install/lib "$bin"
+        done
+    fi
 
     # Get git commit hash
     git_hash=$(git -C "$base"/llvm-project rev-parse --short HEAD)
