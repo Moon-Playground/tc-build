@@ -11,6 +11,10 @@ on:
         description: 'Vendor string for the build'
         required: true
         default: 'Mayuri'
+      debian_codename:
+        description: 'Debian codename for the build'
+        required: true
+        default: 'bookworm'
   workflow_call:
     inputs:
       llvm_ref:
@@ -21,6 +25,10 @@ on:
         type: string
         required: true
         default: 'Mayuri'
+      debian_codename:
+        type: string
+        required: true
+        default: 'bookworm'
 
 permissions:
   contents: write
@@ -29,7 +37,7 @@ jobs:
   build_llvm:
     runs-on: ${{ matrix.run_on }}
     container:
-      image: debian:bookworm
+      image: debian:${{ inputs.debian_codename }}
     strategy:
       matrix:
         run_on:

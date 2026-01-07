@@ -23,9 +23,18 @@ jobs:
       vendor_string: ${{ inputs.vendor_string }}
     secrets: inherit
 
-  debian:
+  bookworm:
     uses: ./.github/workflows/build-debian.yml
     with:
       llvm_ref: ${{ inputs.llvm_ref }}
       vendor_string: ${{ inputs.vendor_string }}
+      debian_codename: bookworm
+    secrets: inherit
+
+  trixie:
+    uses: ./.github/workflows/build-debian.yml
+    with:
+      llvm_ref: ${{ inputs.llvm_ref }}
+      vendor_string: ${{ inputs.vendor_string }}
+      debian_codename: trixie
     secrets: inherit

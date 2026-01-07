@@ -4,13 +4,17 @@ base=$(dirname "$(readlink -f "$0")")
 install=$base/install
 src=$base/src
 export PATH="$base/.clang/bin:$PATH"
-if [[ $(command -v apt) ]]; then
-    export OS=debian
-elif [[ $(command -v dnf) ]]; then
+
+# OS Detection
+if [[ $(command -v dnf) ]]; then
     export OS=fedora
 else
-    export OS=archlinux
+    export OS=debian
 fi
+
+# Architecture Detection
+ARCH=$(uname -m)
+export ARCH
 
 set -eu
 
@@ -28,54 +32,23 @@ function do_all() {
     do_deps
     do_llvm
     do_binutils
-    do_kernel
+    [[ $ARCH == "x86_64" ]] && do_kernel
 }
 
 function do_binutils() {
+    local targets=("aarch64" "arm")
+    [[ $ARCH == "x86_64" ]] && targets+=("x86_64")
+
     "$base"/build-binutils.py \
         --install-folder "$install" \
         --show-build-commands \
-        --targets aarch64 arm x86_64
+        --targets "${targets[@]}"
 }
 
 function do_deps() {
     # We only run this when running on GitHub Actions
     [[ -z ${GITHUB_ACTIONS:-} ]] && return 0
-    if [[ $OS == "archlinux" ]]; then
-        # Refresh mirrorlist to avoid dead mirrors
-        pacman -Syu --noconfirm
-
-        pacman -S --noconfirm --needed \
-            base-devel \
-            bc \
-            bison \
-            ccache \
-            clang \
-            cmake \
-            compiler-rt \
-            cpio \
-            curl \
-            flex \
-            git \
-            github-cli \
-            libarchive \
-            libbsd \
-            libcap \
-            libedit \
-            libelf \
-            libffi \
-            libtool \
-            lld \
-            llvm \
-            make \
-            ninja \
-            openssl \
-            patchelf \
-            python-pyelftools \
-            python-setuptools \
-            python3 \
-            uboot-tools
-    elif [[ $OS == "fedora" ]]; then
+    if [[ $OS == "fedora" ]]; then
         dnf install -y \
             bc \
             bison \
@@ -181,12 +154,15 @@ function do_llvm() {
     extra_args=()
     [[ -n ${GITHUB_ACTIONS:-} ]] && extra_args+=(--no-ccache)
     TomTal=$(nproc)
-    TomTal=$TomTal+1
+    TomTal=$((TomTal + 1))
+
+    local targets=("AArch64" "ARM")
+    [[ $ARCH == "x86_64" ]] && targets+=("X86")
 
     "$base"/build-llvm.py \
         --install-folder "$install" \
         --vendor-string "$LLVM_VENDOR_STRING" \
-        --targets AArch64 ARM X86 \
+        --targets "${targets[@]}" \
         --defines "LLVM_PARALLEL_COMPILE_JOBS=$TomTal LLVM_PARALLEL_LINK_JOBS=$TomTal CMAKE_C_FLAGS='-g0 -O3' CMAKE_CXX_FLAGS='-g0 -O3' LLVM_USE_LINKER=lld LLVM_ENABLE_LLD=ON" \
         --projects clang compiler-rt lld polly openmp \
         --no-ccache \
@@ -203,18 +179,16 @@ function do_compress() {
     rm -f "$install"/lib/*.a "$install"/lib/*.la
 
     # Strip remaining binaries
-    for f in $(find install -type f -exec file {} \; | grep 'not stripped' | awk '{print $1}'); do
-        strip -s "${f::-1}"
+    # Avoid strip failing on non-ELFs
+    find "$install" -type f -exec file {} \; | grep 'not stripped' | cut -d: -f1 | while read -r f; do
+        strip -s "$f" || true
     done
 
     if [[ $OS != "fedora" ]]; then
         # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
-        for bin in $(find install -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | awk '{print $1}'); do
-            # Remove last character from file output (':')
-            bin="${bin::-1}"
-
+        find "$install" -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | cut -d: -f1 | while read -r bin; do
             echo "$bin"
-            patchelf --set-rpath install/lib "$bin"
+            patchelf --set-rpath "$install/lib" "$bin"
         done
     fi
 
@@ -223,11 +197,7 @@ function do_compress() {
     clang_version=$("$base"/install/bin/clang --version | head -n 1 | awk '{print $4}')
     major_version=$(echo "$clang_version" | cut -d. -f1)
 
-    if [[ $OS == "archlinux" ]]; then
-        file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-archlinux-"$git_hash".tar.xz
-    elif [[ $OS == "debian" ]]; then
-        file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-bookworm-"$git_hash".tar.xz
-    elif [[ $OS == "fedora" ]]; then
+    if [[ $OS == "fedora" ]]; then
         # Create RPM structure
         rpmbuild_dir="$base/rpmbuild"
         mkdir -p "$rpmbuild_dir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -244,7 +214,7 @@ Release:        $git_hash%{?dist}
 Summary:        Custom LLVM/Clang build
 License:        Apache-2.0
 Source0:        $src_tar
-BuildArch:      x86_64
+BuildArch:      $ARCH
 AutoReqProv:    no
 Provides:       clang llvm lld polly openmp compiler-rt binutils
 
@@ -271,14 +241,26 @@ EOF
 
         # Move RPM to dist
         mkdir -p "$base"/dist
-        mv "$rpmbuild_dir"/RPMS/x86_64/*.rpm "$base"/dist/
+        mv "$rpmbuild_dir"/RPMS/"$ARCH"/*.rpm "$base"/dist/
 
         # Upload RPMs
         for rpm in "$base"/dist/*.rpm; do
             curl -X POST -F "file=@$rpm" https://temp.wulan17.dev/api/v1/upload
         done
         return
+    else
+        # Detect distro codename (e.g., bookworm, jammy)
+        if [[ -f /etc/os-release ]]; then
+            distro_name=$(grep "^VERSION_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+            # If VERSION_CODENAME is empty (common on Ubuntu), try UBUNTU_CODENAME or ID
+            [[ -z $distro_name ]] && distro_name=$(grep "^UBUNTU_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+            [[ -z $distro_name ]] && distro_name=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+        fi
+        # Default to "linux" if detection failed
+        distro_name=${distro_name:-linux}
+        file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-"$distro_name"-"$ARCH"-"$git_hash".tar.xz
     fi
+
     # Compress the install folder to save space
     mkdir -p "$base"/dist
     cd "$install"
@@ -293,10 +275,6 @@ function do_release() {
         # Find RPM files
         find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0 | while IFS= read -r -d '' f; do
             file_name="$f"
-            # Just take the first one or we can stick to one var.
-            # Ideally we should upload all, but let's stick to the structure.
-            # Assuming one RPM for now or we will just use the last found for ASSET assignment variable (logic below only supports one asset)
-            # To support multiple, we'd need to loop the upload command.
             break
         done
     else
@@ -305,10 +283,12 @@ function do_release() {
             break
         done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
     fi
+
     if [[ -z $file_name ]]; then
         echo "No file found to upload."
         exit 1
     fi
+
     clang_version=$("$base"/install/bin/clang --version | head -n 1 | awk '{print $4}')
     git_hash=$(git -C "$base"/llvm-project rev-parse --short HEAD)
 
