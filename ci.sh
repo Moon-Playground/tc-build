@@ -77,8 +77,6 @@ function do_deps() {
             perl-Digest-SHA \
             python3-pyelftools \
             python3-setuptools \
-            rpm-build \
-            rpmdevtools \
             uboot-tools \
             wget \
             xz \
@@ -184,96 +182,30 @@ function do_compress() {
         strip -s "$f" || true
     done
 
-    if [[ $OS != "fedora" ]]; then
-        # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
-        find "$install" -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | cut -d: -f1 | while read -r bin; do
-            echo "$bin"
-            patchelf --set-rpath "$install/lib" "$bin"
-        done
-    fi
+    # Set executable rpaths so setting LD_LIBRARY_PATH isn't necessary
+    find "$install" -mindepth 2 -maxdepth 3 -type f -exec file {} \; | grep 'ELF .* interpreter' | cut -d: -f1 | while read -r bin; do
+        echo "$bin"
+        patchelf --set-rpath "$install/lib" "$bin"
+    done
 
     # Get git commit hash
     git_hash=$(git -C "$base"/llvm-project rev-parse --short HEAD)
     clang_version=$("$base"/install/bin/clang --version | head -n 1 | awk '{print $4}')
-    major_version=$(echo "$clang_version" | cut -d. -f1)
-
-    if [[ $OS == "fedora" ]]; then
-        # Create RPM structure
-        rpmbuild_dir="$base/rpmbuild"
-        mkdir -p "$rpmbuild_dir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-        # Create tarball for RPM source
-        src_tar="clang-$clang_version.tar.gz"
-        tar -czf "$rpmbuild_dir/SOURCES/$src_tar" -C "$install" .
-
-        # Create SPEC file
-        cat <<EOF >"$rpmbuild_dir/SPECS/clang.spec"
-# Disable the build-id and debuginfo generation that is causing the crash
-%define _missing_build_ids_terminate_build 0
-%define debug_package %{nil}
-%global __brp_ldconfig /usr/bin/true
-%global __brp_strip /usr/bin/true
-%global __brp_mangled_shebangs /usr/bin/true
-
-Name:           clang-$LLVM_VENDOR_STRING
-Version:        $major_version
-Release:        $git_hash%{?dist}
-Summary:        Custom LLVM/Clang build
-License:        Apache-2.0
-Source0:        $src_tar
-BuildArch:      $ARCH
-AutoReqProv:    no
-Provides:       clang llvm lld polly openmp compiler-rt binutils
-
-%description
-Custom LLVM/Clang build by $LLVM_VENDOR_STRING
-
-%prep
-%setup -c
-
-%install
-mkdir -p %{buildroot}/usr
-cp -r * %{buildroot}/usr/
-
-# Fix ambiguous python shebangs
-find %{buildroot}/usr/share/opt-viewer/ -name "*.py" -exec sed -i '1s|#!.*python|#!/usr/bin/python3|' {} +
-
-# Fix executable bit warnings
-chmod -x %{buildroot}/usr/share/opt-viewer/style.css
-chmod -x %{buildroot}/usr/share/opt-viewer/optpmap.py
-
-%files
-/usr/*
-
-%changelog
-* $(date "+%a %b %d %Y") $LLVM_VENDOR_STRING - $major_version-$git_hash
-- Automated build
-EOF
-
-        # Build RPM
-        rpmbuild -bb "$rpmbuild_dir/SPECS/clang.spec" --define "_topdir $rpmbuild_dir"
-
-        # Move RPM to dist
-        mkdir -p "$base"/dist
-        mv "$rpmbuild_dir"/RPMS/"$ARCH"/*.rpm "$base"/dist/
-
-        # Upload RPMs
-        for rpm in "$base"/dist/*.rpm; do
-            curl -X POST -F "file=@$rpm" https://temp.wulan17.dev/api/v1/upload
-        done
-        return
-    else
-        # Detect distro codename (e.g., bookworm, jammy)
-        if [[ -f /etc/os-release ]]; then
-            distro_name=$(grep "^VERSION_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '\"')
-            # If VERSION_CODENAME is empty (common on Ubuntu), try UBUNTU_CODENAME or ID
-            [[ -z $distro_name ]] && distro_name=$(grep "^UBUNTU_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '\"')
-            [[ -z $distro_name ]] && distro_name=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+    # Detect distro codename (e.g., bookworm, jammy, fedora40)
+    if [[ -f /etc/os-release ]]; then
+        distro_name=$(grep "^VERSION_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+        # If VERSION_CODENAME is empty (common on Ubuntu/Fedora), try ID
+        [[ -z $distro_name ]] && distro_name=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+        # For Fedora, append VERSION_ID for clarity
+        if [[ $distro_name == "fedora" ]]; then
+            version_id=$(grep "^VERSION_ID=" /etc/os-release | cut -d= -f2 | tr -d '\"')
+            distro_name="${distro_name}${version_id}"
         fi
-        # Default to "linux" if detection failed
-        distro_name=${distro_name:-linux}
-        file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-"$distro_name"-"$ARCH"-"$git_hash".tar.xz
     fi
+
+    # Default to "linux" if detection failed
+    distro_name=${distro_name:-linux}
+    file_name="$LLVM_VENDOR_STRING"-clang_"$clang_version"-"$distro_name"-"$ARCH"-"$git_hash".tar.xz
 
     # Compress the install folder to save space
     mkdir -p "$base"/dist
@@ -284,19 +216,8 @@ EOF
 
 function do_release() {
     # Upload to GitHub Releases using GitHub CLI
-    file_name=""
-    if [[ $OS == "fedora" ]]; then
-        # Find RPM files
-        while IFS= read -r -d '' f; do
-            file_name="$f"
-            break
-        done < <(find "$base"/dist/ -maxdepth 1 -name "*.rpm" -print0)
-    else
-        while IFS= read -r -d '' f; do
-            file_name="$f"
-            break
-        done < <(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print0)
-    fi
+    # Find tarball files
+    file_name=$(find "$base"/dist/ -maxdepth 1 -name "${LLVM_VENDOR_STRING}-clang_*.tar.xz" -print -quit)
 
     if [[ -z $file_name ]]; then
         echo "No file found to upload."
