@@ -36,8 +36,7 @@ function do_all() {
 }
 
 function do_binutils() {
-    local targets=("aarch64" "arm")
-    [[ $ARCH == "x86_64" ]] && targets+=("x86_64")
+    local targets=("aarch64" "arm" "x86_64")
 
     "$base"/build-binutils.py \
         --install-folder "$install" \
@@ -154,8 +153,7 @@ function do_llvm() {
     TomTal=$(nproc)
     TomTal=$((TomTal + 1))
 
-    local targets=("AArch64" "ARM")
-    [[ $ARCH == "x86_64" ]] && targets+=("X86")
+    local targets=("AArch64" "ARM" "X86")
 
     "$base"/build-llvm.py \
         --install-folder "$install" \
