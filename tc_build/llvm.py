@@ -41,8 +41,10 @@ class LLVMBuilder(Builder):
         self.ccache = False
         self.check_targets = []
         self.cmake_defines = {
+            'CLANG_DEFAULT_LINKER': 'lld',
             # Reduce dynamic dependencies
             'LLVM_ENABLE_LIBXML2': 'OFF',
+            'LLVM_ENABLE_LLD': 'ON',
             # While this option reduces build resources and disk space, it
             # increases start up time for the tools dynamically linked against
             # it and limits optimization opportunities for LTO, PGO, and BOLT.

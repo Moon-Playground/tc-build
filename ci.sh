@@ -159,7 +159,7 @@ function do_llvm() {
         --install-folder "$install" \
         --vendor-string "$LLVM_VENDOR_STRING" \
         --targets "${targets[@]}" \
-        --defines "LLVM_PARALLEL_COMPILE_JOBS=$TomTal LLVM_PARALLEL_LINK_JOBS=$TomTal CMAKE_C_FLAGS='-g0 -O3' CMAKE_CXX_FLAGS='-g0 -O3' LLVM_USE_LINKER=lld LLVM_ENABLE_LLD=ON" \
+        --defines "LLVM_PARALLEL_COMPILE_JOBS=$TomTal LLVM_PARALLEL_LINK_JOBS=$TomTal CMAKE_C_FLAGS='-g0 -O3' CMAKE_CXX_FLAGS='-g0 -O3'" \
         --projects clang compiler-rt lld polly openmp \
         --no-ccache \
         --quiet-cmake \

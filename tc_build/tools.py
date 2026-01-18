@@ -89,8 +89,11 @@ class HostTools:
                 return None
             return self.validate_ld(Path(ld))
 
-        # For GCC, it is only worth testing 'gold'
-        return self.validate_ld('gold')
+        # For GCC, prefer 'lld', then 'gold'
+        for linker in ['lld', 'gold']:
+            if (ld := self.validate_ld(linker)):
+                return ld
+        return None
 
     def find_host_ranlib(self):
         # GNU ranlib is the default, no need for llvm-ranlib if using GCC
