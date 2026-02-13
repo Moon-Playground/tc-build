@@ -54,6 +54,8 @@ jobs:
         LLVM_VENDOR_STRING: ${{ inputs.vendor_string }}
     - name: Build binutils
       run: bash ci.sh binutils
+    - name: Download and build mold
+      run: bash ci.sh mold
     - name: Compress artifacts
       run: bash ci.sh compress
       env:

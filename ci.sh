@@ -21,7 +21,7 @@ set -eu
 function parse_parameters() {
     while (($#)); do
         case $1 in
-            all | binutils | deps | kernel | llvm | compress | release) action=$1 ;;
+            all | binutils | deps | kernel | llvm | mold | compress | release) action=$1 ;;
             *) exit 33 ;;
         esac
         shift
@@ -166,6 +166,34 @@ function do_llvm() {
         --llvm-folder "$base"/llvm-project \
         --lto thin \
         "${extra_args[@]}"
+}
+
+function do_mold() {
+    local mold=$src/mold
+
+    if [[ -d $mold ]]; then
+        git -C "$mold" fetch --depth=1 origin master
+        git -C "$mold" reset --hard FETCH_HEAD
+    else
+        git clone \
+            --branch "master" \
+            --depth=1 \
+            --single-branch \
+            https://github.com/rui314/mold.git \
+            "$mold"
+    fi
+    cd mold
+    ./install-build-deps.sh
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DMOLD_USE_STATIC_LIBS=ON \
+        -DCMAKE_INSTALL_PREFIX="$install" ..
+    cmake --build . -j"$(nproc)"
+    cmake --build . --target install
 }
 
 function do_compress() {
