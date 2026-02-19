@@ -176,13 +176,13 @@ function do_mold() {
         git -C "$mold" reset --hard FETCH_HEAD
     else
         git clone \
-            --branch "master" \
+            --branch "main" \
             --depth=1 \
             --single-branch \
             https://github.com/rui314/mold.git \
             "$mold"
     fi
-    cd mold
+    cd $mold
     ./install-build-deps.sh
     mkdir -p build
     cd build
